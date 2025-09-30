@@ -262,6 +262,10 @@ class EntitlementDataProcessor:
         """
         Determine which groups should be used for chargeback purposes.
 
+        All security groups with group rules to a project or the organization should be
+        available for chargeback. This includes Azure AD groups and external security groups
+        that have been granted permissions to the organization or projects.
+
         Args:
             groups: List of groups user belongs to
 
@@ -271,8 +275,13 @@ class EntitlementDataProcessor:
         chargeback_groups = []
 
         for group in groups:
-            # Focus on security groups and Azure AD groups for chargeback
+            # Include security groups from external sources (Azure AD, Windows AD)
             if group.group_type and group.group_type.value in ['azureActiveDirectory', 'windows']:
+                # Exclude built-in/system groups that are auto-created by Azure DevOps
+                if not self._is_system_group(group):
+                    chargeback_groups.append(group.display_name)
+            # Also check if this is marked as a security group (regardless of origin)
+            elif group.is_security_group:
                 # Exclude built-in/system groups
                 if not self._is_system_group(group):
                     chargeback_groups.append(group.display_name)
@@ -283,24 +292,34 @@ class EntitlementDataProcessor:
         """
         Check if a group is a system/built-in group that should be excluded from chargeback.
 
+        Built-in groups are auto-created by Azure DevOps and should not be used for
+        cost allocation as they don't represent actual organizational teams or departments.
+
         Args:
             group: Group object
 
         Returns:
             True if this is a system group
         """
-        system_prefixes = [
-            'Project Collection',
-            'Project Valid Users',
-            'Project Administrators',
-            'Contributors',
-            'Readers',
-            'Build Administrators',
-            'Endpoint Administrators'
-        ]
+        # System groups have 'vsts' origin (Azure DevOps built-in groups)
+        if group.origin and group.origin.lower() == 'vsts':
+            return True
 
         group_name = group.display_name.lower()
-        return any(prefix.lower() in group_name for prefix in system_prefixes)
+
+        # Built-in group name patterns
+        system_patterns = [
+            'project collection',  # Project Collection Valid Users, Administrators, etc.
+            'project valid users',
+            'contributors',  # Default Contributors group
+            'readers',  # Default Readers group
+            'build administrators',
+            'endpoint administrators',
+            'release administrators',
+            'security service group'
+        ]
+
+        return any(pattern in group_name for pattern in system_patterns)
 
     def _calculate_license_cost(self, entitlement: Optional[Entitlement]) -> Optional[float]:
         """
