@@ -306,8 +306,8 @@ class EntitlementDataProcessor:
         """
         Check if a group is a system/built-in group that should be excluded from chargeback.
 
-        Built-in groups are auto-created by Azure DevOps and should not be used for
-        cost allocation as they don't represent actual organizational teams or departments.
+        Built-in groups are auto-created by Azure DevOps (origin='vsts') and should not be
+        used for cost allocation as they don't represent actual organizational teams or departments.
 
         Args:
             group: Group object
@@ -319,21 +319,7 @@ class EntitlementDataProcessor:
         if group.origin and group.origin.lower() == 'vsts':
             return True
 
-        group_name = group.display_name.lower()
-
-        # Built-in group name patterns
-        system_patterns = [
-            'project collection',  # Project Collection Valid Users, Administrators, etc.
-            'project valid users',
-            'contributors',  # Default Contributors group
-            'readers',  # Default Readers group
-            'build administrators',
-            'endpoint administrators',
-            'release administrators',
-            'security service group'
-        ]
-
-        return any(pattern in group_name for pattern in system_patterns)
+        return False
 
     def _calculate_license_cost(self, entitlement: Optional[Entitlement]) -> Optional[float]:
         """

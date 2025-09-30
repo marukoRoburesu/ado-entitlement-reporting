@@ -348,7 +348,7 @@ class ReportGenerator:
 
         with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
-                'Group Name', 'Group Type', 'Member Count', 'Is Security Group',
+                'Organization', 'Group Name', 'Group Type', 'Member Count', 'Is Security Group',
                 'Domain', 'Origin', 'Is Orphaned', 'Principal Name'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -358,16 +358,22 @@ class ReportGenerator:
             all_groups = {}
             for summary in report.user_summaries:
                 for group in summary.all_groups:
+                    # Skip VSTS built-in groups
+                    if group.origin and group.origin.lower() == 'vsts':
+                        continue
                     all_groups[group.descriptor] = group
 
-            # Add orphaned groups
+            # Add orphaned groups (excluding VSTS)
             for group in report.orphaned_groups:
+                if group.origin and group.origin.lower() == 'vsts':
+                    continue
                 all_groups[group.descriptor] = group
 
             for group in all_groups.values():
                 is_orphaned = group in report.orphaned_groups
 
                 writer.writerow({
+                    'Organization': report.organization,
                     'Group Name': group.display_name,
                     'Group Type': group.group_type.value if group.group_type else 'unknown',
                     'Member Count': group.member_count or 0,
@@ -613,19 +619,26 @@ class ReportGenerator:
         """Create group analysis worksheet for Excel report."""
         group_data = []
 
-        # Collect all unique groups
+        # Collect all unique groups (excluding VSTS)
         all_groups = {}
         for summary in report.user_summaries:
             for group in summary.all_groups:
+                # Skip VSTS built-in groups
+                if group.origin and group.origin.lower() == 'vsts':
+                    continue
                 all_groups[group.descriptor] = group
 
         for group in report.orphaned_groups:
+            # Skip VSTS built-in groups
+            if group.origin and group.origin.lower() == 'vsts':
+                continue
             all_groups[group.descriptor] = group
 
         for group in all_groups.values():
             is_orphaned = group in report.orphaned_groups
 
             group_data.append({
+                'Organization': report.organization,
                 'Group Name': group.display_name,
                 'Group Type': group.group_type.value if group.group_type else 'unknown',
                 'Member Count': group.member_count or 0,
