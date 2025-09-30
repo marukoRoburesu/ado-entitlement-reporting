@@ -15,7 +15,7 @@ import click
 from src.config import ConfigManager, AppConfig
 from src.auth import AuthManager
 from src.data_processor import EntitlementDataProcessor
-from src.reporting import ReportGenerator
+from src.reporting import ReportGenerator, ConsolidatedReportGenerator
 
 
 def setup_logging(config: AppConfig, verbose: bool = False) -> None:
@@ -175,6 +175,9 @@ def main(organization, config, output, output_formats, verbose, validate_config,
     # Process each organization
     logger.info("Starting Azure DevOps entitlement reporting...")
 
+    # Store all organization reports for consolidated reporting
+    all_organization_reports = []
+
     try:
         for org in organizations_to_process:
             logger.info(f"Processing organization: {org}")
@@ -215,6 +218,7 @@ def main(organization, config, output, output_formats, verbose, validate_config,
                 # Step 3: Generate organization report
                 click.echo("📊 Generating organization analysis...")
                 organization_report = data_processor.generate_organization_report()
+                all_organization_reports.append(organization_report)
                 bar.update(1)
 
                 # Step 4: Generate output reports
@@ -261,6 +265,38 @@ def main(organization, config, output, output_formats, verbose, validate_config,
                 click.echo(f"\n📋 License Distribution:")
                 for license_type, count in organization_report.licenses_by_type.items():
                     click.echo(f"   • {license_type.replace('_', ' ').title()}: {count}")
+
+        # Generate consolidated reports if multiple organizations were processed
+        if len(all_organization_reports) > 1:
+            click.echo(f"\n🔄 Generating consolidated reports across {len(all_organization_reports)} organizations...")
+            logger.info(f"Generating consolidated reports for {len(all_organization_reports)} organizations")
+
+            consolidated_generator = ConsolidatedReportGenerator(app_config.output.directory)
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+            # Generate consolidated user report
+            consolidated_user_file = consolidated_generator.generate_consolidated_user_report(
+                all_organization_reports,
+                timestamp
+            )
+            click.echo(f"   📄 Consolidated User Report: {consolidated_user_file.name}")
+
+            # Generate consolidated chargeback report
+            consolidated_chargeback_file = consolidated_generator.generate_consolidated_chargeback_report(
+                all_organization_reports,
+                timestamp
+            )
+            click.echo(f"   📄 Consolidated Chargeback Report: {consolidated_chargeback_file.name}")
+
+            # Calculate total stats across all orgs
+            total_users = sum(r.total_users for r in all_organization_reports)
+            total_cost = sum(r.total_license_cost or 0 for r in all_organization_reports)
+
+            click.echo(f"\n📊 Consolidated Statistics:")
+            click.echo(f"   • Total Organizations: {len(all_organization_reports)}")
+            click.echo(f"   • Total Users (across all orgs): {total_users}")
+            click.echo(f"   • Total License Cost: ${total_cost:.2f}")
 
     except Exception as e:
         logger.error(f"Error during execution: {e}")

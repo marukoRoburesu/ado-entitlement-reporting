@@ -20,6 +20,163 @@ from src.models import OrganizationReport, UserEntitlementSummary, Group, User, 
 logger = logging.getLogger(__name__)
 
 
+class ConsolidatedReportGenerator:
+    """
+    Generator for consolidated reports across multiple organizations.
+
+    Handles merging user data across organizations, deduplicating users,
+    and aggregating costs.
+    """
+
+    def __init__(self, output_directory: Union[str, Path] = "./reports"):
+        """
+        Initialize the consolidated report generator.
+
+        Args:
+            output_directory: Directory to save consolidated reports
+        """
+        self.output_directory = Path(output_directory)
+        self.output_directory.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Consolidated report generator initialized with output directory: {self.output_directory}")
+
+    def generate_consolidated_user_report(self, reports: List[OrganizationReport],
+                                         timestamp: str) -> Path:
+        """
+        Generate a consolidated user report across all organizations.
+
+        Users appearing in multiple orgs will have a single row with:
+        - Organizations column listing all orgs (comma-separated)
+        - License costs summed across orgs
+        - Chargeback groups combined from all orgs
+
+        Args:
+            reports: List of organization reports
+            timestamp: Timestamp string for filename
+
+        Returns:
+            Path to generated consolidated CSV file
+        """
+        file_path = self.output_directory / f"consolidated_user_summary_{timestamp}.csv"
+        logger.info(f"Generating consolidated user report: {file_path}")
+
+        # Build user index by email/principal name
+        user_data_by_key = {}
+
+        for report in reports:
+            for summary in report.user_summaries:
+                user = summary.user
+                entitlement = summary.entitlement
+
+                # Create unique key for user (email is best, fallback to principal name)
+                user_key = user.mail_address or user.principal_name or user.descriptor
+
+                if user_key not in user_data_by_key:
+                    # First time seeing this user
+                    user_data_by_key[user_key] = {
+                        'organizations': [report.organization],
+                        'user_name': user.display_name,
+                        'email': user.mail_address or '',
+                        'principal_name': user.principal_name or '',
+                        'unique_name': user.unique_name or '',
+                        'descriptor': user.descriptor,
+                        'origin': user.origin or '',
+                        'domain': user.domain or '',
+                        'license_display_names': [entitlement.license_display_name if entitlement else 'None'],
+                        'total_license_cost': summary.license_cost or 0.0,
+                        'chargeback_groups': set(summary.chargeback_groups),
+                        'is_active': user.is_active,
+                        'last_accessed': entitlement.last_accessed_date if entitlement else None
+                    }
+                else:
+                    # User exists in multiple orgs - merge data
+                    existing = user_data_by_key[user_key]
+                    existing['organizations'].append(report.organization)
+                    if entitlement and entitlement.license_display_name:
+                        existing['license_display_names'].append(entitlement.license_display_name)
+                    existing['total_license_cost'] += (summary.license_cost or 0.0)
+                    existing['chargeback_groups'].update(summary.chargeback_groups)
+                    # Update last accessed to most recent
+                    if entitlement and entitlement.last_accessed_date:
+                        if not existing['last_accessed'] or entitlement.last_accessed_date > existing['last_accessed']:
+                            existing['last_accessed'] = entitlement.last_accessed_date
+
+        # Write consolidated CSV
+        with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = [
+                'User Name', 'Email', 'Principal Name', 'Organizations', 'License Types',
+                'Total License Cost', 'Chargeback Groups', 'Is Active', 'Last Accessed'
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for user_data in user_data_by_key.values():
+                writer.writerow({
+                    'User Name': user_data['user_name'],
+                    'Email': user_data['email'],
+                    'Principal Name': user_data['principal_name'],
+                    'Organizations': ', '.join(user_data['organizations']),
+                    'License Types': ', '.join(set(user_data['license_display_names'])),
+                    'Total License Cost': f"{user_data['total_license_cost']:.2f}",
+                    'Chargeback Groups': '; '.join(sorted(user_data['chargeback_groups'])),
+                    'Is Active': 'Yes' if user_data['is_active'] else 'No' if user_data['is_active'] is not None else 'Unknown',
+                    'Last Accessed': user_data['last_accessed'].strftime('%Y-%m-%d') if user_data['last_accessed'] else ''
+                })
+
+        logger.info(f"Generated consolidated user report with {len(user_data_by_key)} unique users")
+        return file_path
+
+    def generate_consolidated_chargeback_report(self, reports: List[OrganizationReport],
+                                               timestamp: str) -> Path:
+        """
+        Generate a consolidated chargeback report across all organizations.
+
+        Args:
+            reports: List of organization reports
+            timestamp: Timestamp string for filename
+
+        Returns:
+            Path to generated consolidated CSV file
+        """
+        file_path = self.output_directory / f"consolidated_chargeback_{timestamp}.csv"
+        logger.info(f"Generating consolidated chargeback report: {file_path}")
+
+        # Aggregate by organization and group
+        chargeback_data = []
+
+        for report in reports:
+            for group_name, group_data in report.chargeback_by_group.items():
+                licenses = group_data.get('licenses', {})
+                total_users = group_data.get('total_users', 0)
+                total_cost = group_data.get('total_cost', 0.0)
+                cost_per_user = total_cost / total_users if total_users > 0 else 0.0
+
+                chargeback_data.append({
+                    'Organization': report.organization,
+                    'Group Name': group_name,
+                    'Total Users': total_users,
+                    'Basic Licenses': licenses.get('Basic', 0),
+                    'Stakeholder Licenses': licenses.get('Stakeholder', 0),
+                    'VS Subscriber Licenses': licenses.get('Visual Studio Subscriber', 0),
+                    'VS Enterprise Licenses': licenses.get('Visual Studio Enterprise', 0),
+                    'Total Cost': f"{total_cost:.2f}",
+                    'Cost Per User': f"{cost_per_user:.2f}"
+                })
+
+        # Write consolidated CSV
+        with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = [
+                'Organization', 'Group Name', 'Total Users', 'Basic Licenses',
+                'Stakeholder Licenses', 'VS Subscriber Licenses', 'VS Enterprise Licenses',
+                'Total Cost', 'Cost Per User'
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(chargeback_data)
+
+        logger.info(f"Generated consolidated chargeback report with {len(chargeback_data)} entries")
+        return file_path
+
+
 class ReportGenerator:
     """
     Main report generator class that handles multiple output formats
@@ -109,7 +266,7 @@ class ReportGenerator:
 
         with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
-                'User Name', 'Email', 'Principal Name', 'Unique Name', 'User ID', 'Origin ID',
+                'Organization', 'User Name', 'Email', 'Principal Name', 'Unique Name', 'User ID', 'Origin ID',
                 'Descriptor', 'Origin', 'Domain', 'Access Level', 'License Display Name',
                 'Is Active', 'Direct Groups', 'All Groups', 'Chargeback Groups',
                 'License Cost', 'Last Accessed'
@@ -122,6 +279,7 @@ class ReportGenerator:
                 entitlement = summary.entitlement
 
                 writer.writerow({
+                    'Organization': report.organization,
                     'User Name': user.display_name,
                     'Email': user.mail_address or '',
                     'Principal Name': user.principal_name or '',
@@ -149,7 +307,7 @@ class ReportGenerator:
 
         with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
-                'Group Name', 'Total Users', 'Basic Licenses', 'Stakeholder Licenses',
+                'Organization', 'Group Name', 'Total Users', 'Basic Licenses', 'Stakeholder Licenses',
                 'VS Subscriber Licenses', 'VS Enterprise Licenses', 'Other Licenses',
                 'Total Cost', 'Cost Per User'
             ]
@@ -163,13 +321,14 @@ class ReportGenerator:
                 cost_per_user = total_cost / total_users if total_users > 0 else 0.0
 
                 # Count license types
-                basic_count = licenses.get('basic', 0)
-                stakeholder_count = licenses.get('stakeholder', 0)
-                vs_subscriber_count = licenses.get('visualStudioSubscriber', 0)
-                vs_enterprise_count = licenses.get('visualStudioEnterprise', 0)
+                basic_count = licenses.get('Basic', 0)
+                stakeholder_count = licenses.get('Stakeholder', 0)
+                vs_subscriber_count = licenses.get('Visual Studio Subscriber', 0)
+                vs_enterprise_count = licenses.get('Visual Studio Enterprise', 0)
                 other_count = total_users - (basic_count + stakeholder_count + vs_subscriber_count + vs_enterprise_count)
 
                 writer.writerow({
+                    'Organization': report.organization,
                     'Group Name': group_name,
                     'Total Users': total_users,
                     'Basic Licenses': basic_count,
@@ -404,6 +563,7 @@ class ReportGenerator:
             entitlement = summary.entitlement
 
             user_data.append({
+                'Organization': report.organization,
                 'User Name': user.display_name,
                 'Email': user.mail_address or '',
                 'Principal Name': user.principal_name or '',
