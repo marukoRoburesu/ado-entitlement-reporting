@@ -194,12 +194,16 @@ class EntitlementDataProcessor:
         # Determine chargeback groups (security groups for cost allocation)
         chargeback_groups = self._determine_chargeback_groups(direct_groups)
 
+        # Calculate license cost based on license type
+        license_cost = self._calculate_license_cost(entitlement)
+
         return UserEntitlementSummary(
             user=user,
             entitlement=entitlement,
             direct_groups=direct_groups,
             all_groups=all_groups,
             effective_access_level=effective_access_level,
+            license_cost=license_cost,
             chargeback_groups=chargeback_groups,
             last_updated=datetime.now(timezone.utc)
         )
@@ -298,6 +302,39 @@ class EntitlementDataProcessor:
         group_name = group.display_name.lower()
         return any(prefix.lower() in group_name for prefix in system_prefixes)
 
+    def _calculate_license_cost(self, entitlement: Optional[Entitlement]) -> Optional[float]:
+        """
+        Calculate the cost of a license based on the license display name.
+
+        Args:
+            entitlement: User's entitlement
+
+        Returns:
+            License cost or None if no entitlement or unknown license type
+        """
+        if not entitlement or not entitlement.license_display_name:
+            return None
+
+        # Azure DevOps license costs (approximate monthly costs in USD)
+        # These are standard prices and may vary by region or enterprise agreements
+        LICENSE_COSTS = {
+            'Stakeholder': 0.0,  # Free
+            'Basic': 6.0,
+            'Basic + Test Plans': 52.0,
+            'Visual Studio Subscriber': 0.0,  # Included with VS subscription
+            'Visual Studio Professional': 45.0,
+            'Visual Studio Enterprise': 250.0,
+            'Visual Studio Test Professional': 52.0,
+        }
+
+        license_name = entitlement.license_display_name
+        cost = LICENSE_COSTS.get(license_name)
+
+        if cost is None:
+            logger.debug(f"Unknown license type for cost calculation: {license_name}")
+
+        return cost
+
     def generate_organization_report(self) -> OrganizationReport:
         """
         Generate a complete organization entitlement report.
@@ -331,6 +368,12 @@ class EntitlementDataProcessor:
             license_type = entitlement.license_display_name or entitlement.access_level.value or 'Unknown'
             licenses_by_type[license_type] += 1
 
+        # Calculate total license cost
+        total_license_cost = sum(
+            summary.license_cost for summary in self.user_summaries
+            if summary.license_cost is not None
+        )
+
         # Generate chargeback analysis
         chargeback_by_group = self._generate_chargeback_analysis()
 
@@ -344,6 +387,7 @@ class EntitlementDataProcessor:
             groups_by_type=dict(groups_by_type),
             orphaned_groups=orphaned_groups,
             licenses_by_type=dict(licenses_by_type),
+            total_license_cost=total_license_cost if total_license_cost > 0 else None,
             chargeback_by_group=chargeback_by_group
         )
 

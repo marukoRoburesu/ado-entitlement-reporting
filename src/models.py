@@ -23,6 +23,7 @@ class AccessLevel(str, Enum):
     """Azure DevOps access levels."""
     NONE = "none"
     EXPRESS = "express"
+    ADVANCED = "advanced"
     STAKEHOLDER = "stakeholder"
     BASIC = "basic"
     BASIC_PLUS_TEST_PLANS = "basicPlusTestPlans"
