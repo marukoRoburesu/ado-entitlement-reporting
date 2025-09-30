@@ -22,6 +22,7 @@ class SubjectKind(str, Enum):
 class AccessLevel(str, Enum):
     """Azure DevOps access levels."""
     NONE = "none"
+    EXPRESS = "express"
     STAKEHOLDER = "stakeholder"
     BASIC = "basic"
     BASIC_PLUS_TEST_PLANS = "basicPlusTestPlans"
@@ -54,6 +55,7 @@ class User(BaseModel):
     domain: Optional[str] = Field(None, description="User's domain")
     origin: Optional[str] = Field(None, description="Origin of the user account")
     origin_id: Optional[str] = Field(None, description="Original ID from the origin system")
+    id: Optional[str] = Field(None, description="User's ID (used for entitlements API)")
 
     # Status information
     is_active: Optional[bool] = Field(None, description="Whether the user is active")

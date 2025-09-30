@@ -109,9 +109,10 @@ class ReportGenerator:
 
         with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
             fieldnames = [
-                'User Name', 'Email', 'Principal Name', 'Access Level', 'License Display Name',
+                'User Name', 'Email', 'Principal Name', 'Unique Name', 'User ID', 'Origin ID',
+                'Descriptor', 'Origin', 'Domain', 'Access Level', 'License Display Name',
                 'Is Active', 'Direct Groups', 'All Groups', 'Chargeback Groups',
-                'License Cost', 'Last Accessed', 'Origin'
+                'License Cost', 'Last Accessed'
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
@@ -122,8 +123,14 @@ class ReportGenerator:
 
                 writer.writerow({
                     'User Name': user.display_name,
-                    'Email': user.mail_address or user.unique_name or '',
+                    'Email': user.mail_address or '',
                     'Principal Name': user.principal_name or '',
+                    'Unique Name': user.unique_name or '',
+                    'User ID': user.id or '',
+                    'Origin ID': user.origin_id or '',
+                    'Descriptor': user.descriptor,
+                    'Origin': user.origin or '',
+                    'Domain': user.domain or '',
                     'Access Level': summary.effective_access_level.value if summary.effective_access_level else 'none',
                     'License Display Name': entitlement.license_display_name if entitlement else '',
                     'Is Active': 'Yes' if user.is_active else 'No' if user.is_active is not None else 'Unknown',
@@ -131,8 +138,7 @@ class ReportGenerator:
                     'All Groups': '; '.join([g.display_name for g in summary.all_groups]),
                     'Chargeback Groups': '; '.join(summary.chargeback_groups),
                     'License Cost': summary.license_cost or 0.0,
-                    'Last Accessed': entitlement.last_accessed_date.strftime('%Y-%m-%d') if entitlement and entitlement.last_accessed_date else '',
-                    'Origin': user.origin or ''
+                    'Last Accessed': entitlement.last_accessed_date.strftime('%Y-%m-%d') if entitlement and entitlement.last_accessed_date else ''
                 })
 
         return file_path
@@ -289,10 +295,15 @@ class ReportGenerator:
                 {
                     'user': {
                         'display_name': summary.user.display_name,
-                        'email': summary.user.mail_address or summary.user.unique_name,
+                        'email': summary.user.mail_address,
+                        'unique_name': summary.user.unique_name,
                         'principal_name': summary.user.principal_name,
-                        'is_active': summary.user.is_active,
-                        'origin': summary.user.origin
+                        'user_id': summary.user.id,
+                        'origin_id': summary.user.origin_id,
+                        'descriptor': summary.user.descriptor,
+                        'origin': summary.user.origin,
+                        'domain': summary.user.domain,
+                        'is_active': summary.user.is_active
                     },
                     'entitlement': {
                         'access_level': summary.effective_access_level.value if summary.effective_access_level else None,
@@ -394,8 +405,14 @@ class ReportGenerator:
 
             user_data.append({
                 'User Name': user.display_name,
-                'Email': user.mail_address or user.unique_name or '',
+                'Email': user.mail_address or '',
                 'Principal Name': user.principal_name or '',
+                'Unique Name': user.unique_name or '',
+                'User ID': user.id or '',
+                'Origin ID': user.origin_id or '',
+                'Descriptor': user.descriptor,
+                'Origin': user.origin or '',
+                'Domain': user.domain or '',
                 'Access Level': summary.effective_access_level.value if summary.effective_access_level else 'none',
                 'License Display Name': entitlement.license_display_name if entitlement else '',
                 'Is Active': 'Yes' if user.is_active else 'No' if user.is_active is not None else 'Unknown',
@@ -403,8 +420,7 @@ class ReportGenerator:
                 'Total Groups Count': len(summary.all_groups),
                 'Chargeback Groups': '; '.join(summary.chargeback_groups),
                 'License Cost': summary.license_cost or 0.0,
-                'Last Accessed': entitlement.last_accessed_date.strftime('%Y-%m-%d') if entitlement and entitlement.last_accessed_date else '',
-                'Origin': user.origin or ''
+                'Last Accessed': entitlement.last_accessed_date.strftime('%Y-%m-%d') if entitlement and entitlement.last_accessed_date else ''
             })
 
         user_df = pd.DataFrame(user_data)

@@ -81,9 +81,9 @@ class EntitlementDataProcessor:
         self.groups = {group.descriptor: group for group in groups_list}
         logger.info(f"Retrieved {len(self.groups)} groups")
 
-        # Step 3: Retrieve entitlements
+        # Step 3: Retrieve entitlements (requires per-user lookup by descriptor)
         logger.info("Retrieving entitlements...")
-        entitlements_list = self.entitlements_client.get_entitlements()
+        entitlements_list = self.entitlements_client.get_entitlements(users_list)
         self.entitlements = {ent.user_descriptor: ent for ent in entitlements_list}
         logger.info(f"Retrieved {len(self.entitlements)} entitlements")
 

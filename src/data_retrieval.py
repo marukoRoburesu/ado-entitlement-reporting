@@ -244,6 +244,10 @@ class UsersApiClient(AzureDevOpsApiClient):
         Returns:
             User object
         """
+        # Log available keys for debugging
+        logger.debug(f"User data keys: {list(user_data.keys())}")
+        logger.debug(f"User: {user_data.get('displayName')}, id: {user_data.get('id')}, originId: {user_data.get('originId')}, descriptor: {user_data.get('descriptor')}")
+
         return User(
             descriptor=user_data.get('descriptor', ''),
             display_name=user_data.get('displayName', ''),
@@ -254,6 +258,7 @@ class UsersApiClient(AzureDevOpsApiClient):
             domain=user_data.get('domain'),
             origin=user_data.get('origin'),
             origin_id=user_data.get('originId'),
+            id=user_data.get('id'),
             is_active=user_data.get('isActive'),
             metadata=user_data
         )
@@ -356,29 +361,102 @@ class GroupsApiClient(AzureDevOpsApiClient):
 class EntitlementsApiClient(AzureDevOpsApiClient):
     """Client for Azure DevOps User Entitlements API."""
 
-    def get_entitlements(self) -> List[Entitlement]:
+    def get_entitlements(self, users: Optional[List[User]] = None) -> List[Entitlement]:
         """
         Retrieve all user entitlements from the organization.
+
+        Note: The User Entitlements API requires looking up individual users by their descriptor.
+        You cannot retrieve a list without specifying a user. Service accounts and build service
+        identities don't have entitlements and will be skipped.
+
+        Args:
+            users: List of User objects to lookup entitlements for
 
         Returns:
             List of Entitlement objects
         """
         logger.info("Retrieving user entitlements from Azure DevOps")
 
-        url = f"{self.auth.get_organization_url('vsaex')}/_apis/userentitlements"
-        params = {"api-version": "7.1-preview.3"}
+        if not users:
+            logger.warning("No users provided for entitlement lookup")
+            return []
 
         entitlements = []
-        for entitlement_data in self._paginate_request(url, params):
-            try:
-                entitlement = self._parse_entitlement(entitlement_data)
-                entitlements.append(entitlement)
-            except Exception as e:
-                logger.warning(f"Failed to parse entitlement data: {e}")
-                logger.debug(f"Entitlement data: {entitlement_data}")
+        failed_count = 0
+        skipped_service_accounts = 0
 
-        logger.info(f"Retrieved {len(entitlements)} entitlements")
+        for user in users:
+            # Skip service accounts and build service identities
+            # These don't have entitlements in the User Entitlements API
+            if self._is_service_account(user):
+                skipped_service_accounts += 1
+                logger.debug(f"Skipping service account: {user.display_name}")
+                continue
+
+            # Try descriptor first, then origin_id as fallback
+            user_id = user.descriptor or user.origin_id
+
+            if not user_id:
+                logger.debug(f"Skipping user {user.display_name} - no descriptor or origin_id")
+                continue
+
+            try:
+                entitlement = self.get_entitlement_by_user_id(user_id)
+                if entitlement:
+                    entitlements.append(entitlement)
+                else:
+                    logger.debug(f"No entitlement found for user {user.display_name}")
+            except requests.HTTPError as e:
+                if e.response.status_code == 404:
+                    # If descriptor lookup failed, try origin_id as fallback
+                    if user_id == user.descriptor and user.origin_id:
+                        logger.debug(f"Descriptor lookup failed for {user.display_name}, trying origin_id")
+                        try:
+                            entitlement = self.get_entitlement_by_user_id(user.origin_id)
+                            if entitlement:
+                                entitlements.append(entitlement)
+                                continue
+                        except Exception:
+                            pass
+                    logger.debug(f"No entitlement found for user {user.display_name} (user_id: {user_id})")
+                else:
+                    failed_count += 1
+                    logger.warning(f"Failed to retrieve entitlement for user {user.display_name} (user_id: {user_id}): HTTP {e.response.status_code}")
+            except Exception as e:
+                failed_count += 1
+                logger.warning(f"Failed to retrieve entitlement for user {user.display_name} (user_id: {user_id}): {e}")
+
+        logger.info(f"Retrieved {len(entitlements)} entitlements out of {len(users)} users ({skipped_service_accounts} service accounts, {failed_count} failures)")
         return entitlements
+
+    def _is_service_account(self, user: User) -> bool:
+        """
+        Check if a user is a service account or build service identity.
+
+        Service accounts don't have entitlements in the User Entitlements API.
+
+        Args:
+            user: User object
+
+        Returns:
+            True if this is a service account
+        """
+        if not user.display_name:
+            return False
+
+        display_name_lower = user.display_name.lower()
+
+        # Common service account patterns
+        service_patterns = [
+            'build service',
+            'agent pool service',
+            'project collection service',
+            'release management',
+            'deployment',
+            'pipeline'
+        ]
+
+        return any(pattern in display_name_lower for pattern in service_patterns)
 
     def get_entitlement_by_user_id(self, user_id: str) -> Optional[Entitlement]:
         """
@@ -426,6 +504,7 @@ class EntitlementsApiClient(AzureDevOpsApiClient):
         # Map to our enum - handle common variations
         access_level_mapping = {
             'basic': AccessLevel.BASIC,
+            'express': AccessLevel.EXPRESS,
             'stakeholder': AccessLevel.STAKEHOLDER,
             'basicplustestplans': AccessLevel.BASIC_PLUS_TEST_PLANS,
             'visualstudiosubscriber': AccessLevel.VISUAL_STUDIO_SUBSCRIBER,

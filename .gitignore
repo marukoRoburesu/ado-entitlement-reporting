@@ -92,3 +92,4 @@ site/
 # Temporary files
 tmp/
 temp/
+config/config.yaml
