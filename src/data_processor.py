@@ -324,10 +324,12 @@ class EntitlementDataProcessor:
             if group.member_count == 0:
                 orphaned_groups.append(group)
 
-        # Analyze licenses by type
+        # Analyze licenses by type (use license_display_name for accurate license tracking)
         licenses_by_type = defaultdict(int)
         for entitlement in self.entitlements.values():
-            licenses_by_type[entitlement.access_level.value] += 1
+            # Use license_display_name (e.g., "Basic") instead of access_level (e.g., "express")
+            license_type = entitlement.license_display_name or entitlement.access_level.value or 'Unknown'
+            licenses_by_type[license_type] += 1
 
         # Generate chargeback analysis
         chargeback_by_group = self._generate_chargeback_analysis()
@@ -366,16 +368,25 @@ class EntitlementDataProcessor:
             user_name = summary.user.display_name
             access_level = summary.effective_access_level or AccessLevel.NONE
 
+            # Get the actual license type from license_display_name (e.g., "Basic")
+            # instead of access_level (e.g., "express")
+            license_type = 'Unknown'
+            if summary.entitlement and summary.entitlement.license_display_name:
+                license_type = summary.entitlement.license_display_name
+            elif access_level:
+                license_type = access_level.value
+
             # Add user to each of their chargeback groups
             for group_name in summary.chargeback_groups:
                 chargeback_analysis[group_name]['users'].append({
                     'name': user_name,
                     'email': summary.user.mail_address,
+                    'license_type': license_type,
                     'access_level': access_level.value,
                     'license_cost': summary.license_cost or 0.0
                 })
                 chargeback_analysis[group_name]['total_users'] += 1
-                chargeback_analysis[group_name]['licenses'][access_level.value] += 1
+                chargeback_analysis[group_name]['licenses'][license_type] += 1
 
                 if summary.license_cost:
                     chargeback_analysis[group_name]['total_cost'] += summary.license_cost
