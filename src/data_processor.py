@@ -147,19 +147,33 @@ class EntitlementDataProcessor:
 
         This method creates comprehensive user summaries that include user info,
         entitlements, and group memberships for reporting purposes.
+        Excludes VSTS (Azure DevOps built-in) users and service accounts.
         """
         logger.info("Processing user entitlements and group memberships...")
 
         self.user_summaries = []
+        skipped_vsts_users = 0
 
         for user_descriptor, user in self.users.items():
+            # Skip VSTS built-in users and service accounts
+            if user.origin and user.origin.lower() == 'vsts':
+                skipped_vsts_users += 1
+                logger.debug(f"Skipping VSTS user: {user.display_name}")
+                continue
+
+            # Skip service accounts (those with svc. descriptor prefix)
+            if user.descriptor and user.descriptor.startswith('svc.'):
+                skipped_vsts_users += 1
+                logger.debug(f"Skipping service account: {user.display_name}")
+                continue
+
             try:
                 summary = self._create_user_summary(user)
                 self.user_summaries.append(summary)
             except Exception as e:
                 logger.warning(f"Failed to process user {user_descriptor}: {e}")
 
-        logger.info(f"Processed {len(self.user_summaries)} user summaries")
+        logger.info(f"Processed {len(self.user_summaries)} user summaries ({skipped_vsts_users} VSTS/service accounts skipped)")
 
     def _create_user_summary(self, user: User) -> UserEntitlementSummary:
         """
