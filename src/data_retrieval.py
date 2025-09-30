@@ -441,6 +441,10 @@ class EntitlementsApiClient(AzureDevOpsApiClient):
         Returns:
             True if this is a service account
         """
+        # Check if descriptor starts with "svc." which indicates a service account
+        if user.descriptor and user.descriptor.startswith('svc.'):
+            return True
+
         if not user.display_name:
             return False
 
