@@ -510,6 +510,7 @@ class EntitlementsApiClient(AzureDevOpsApiClient):
             'basic': AccessLevel.BASIC,
             'express': AccessLevel.EXPRESS,
             'stakeholder': AccessLevel.STAKEHOLDER,
+            'advanced': AccessLevel.ADVANCED,
             'basicplustestplans': AccessLevel.BASIC_PLUS_TEST_PLANS,
             'visualstudiosubscriber': AccessLevel.VISUAL_STUDIO_SUBSCRIBER,
             'visualstudioenterprise': AccessLevel.VISUAL_STUDIO_ENTERPRISE,
