@@ -177,6 +177,11 @@ class EntitlementDataProcessor:
         """
         logger.info("Processing user entitlements and group memberships...")
 
+        # Build membership maps if not already built (needed when data is injected directly)
+        if not self.user_memberships_map and self.memberships:
+            logger.debug("Building membership maps from provided data...")
+            self._build_membership_maps()
+
         self.user_summaries = []
         skipped_vsts_users = 0
 
