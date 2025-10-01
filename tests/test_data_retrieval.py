@@ -281,34 +281,48 @@ class TestEntitlementsApiClient:
         self.auth = AzureDevOpsAuth(config)
         self.client = EntitlementsApiClient(self.auth)
 
-    @patch.object(EntitlementsApiClient, '_paginate_request')
-    def test_get_entitlements(self, mock_paginate):
+    @patch.object(EntitlementsApiClient, 'get_entitlement_by_user_id')
+    def test_get_entitlements(self, mock_get_by_id):
         """Test retrieving entitlements."""
-        mock_paginate.return_value = [
-            {
-                "user": {"descriptor": "user-1"},
-                "accessLevel": {
-                    "accountLicenseType": "basic",
-                    "licenseDisplayName": "Basic"
-                },
-                "projectEntitlements": [],
-                "groupAssignments": []
-            }
+        # Create test users
+        test_users = [
+            User(descriptor="user-1", display_name="John Doe"),
+            User(descriptor="user-2", display_name="Jane Smith")
         ]
 
-        entitlements = self.client.get_entitlements()
-        assert len(entitlements) == 1
+        # Mock the individual entitlement lookups
+        mock_get_by_id.side_effect = [
+            Entitlement(
+                user_descriptor="user-1",
+                access_level=AccessLevel.BASIC,
+                account_license_type="basic",
+                license_display_name="Basic"
+            ),
+            Entitlement(
+                user_descriptor="user-2",
+                access_level=AccessLevel.STAKEHOLDER,
+                account_license_type="stakeholder",
+                license_display_name="Stakeholder"
+            )
+        ]
+
+        entitlements = self.client.get_entitlements(users=test_users)
+        assert len(entitlements) == 2
         assert entitlements[0].user_descriptor == "user-1"
         assert entitlements[0].access_level == AccessLevel.BASIC
+        assert entitlements[1].user_descriptor == "user-2"
+        assert entitlements[1].access_level == AccessLevel.STAKEHOLDER
 
     def test_parse_entitlement(self):
-        """Test parsing entitlement data."""
+        """Test parsing entitlement data per Microsoft API spec."""
+        # Test Visual Studio Subscriber (none + msdn + eligible)
         entitlement_data = {
             "user": {"descriptor": "user-1"},
             "accessLevel": {
-                "accountLicenseType": "visualStudioSubscriber",
+                "accountLicenseType": "none",
                 "licenseDisplayName": "Visual Studio Subscriber",
                 "licensingSource": "msdn",
+                "msdnLicenseType": "eligible",
                 "assignmentSource": "group"
             },
             "projectEntitlements": [
@@ -327,6 +341,52 @@ class TestEntitlementsApiClient:
         assert len(entitlement.project_entitlements) == 1
         assert len(entitlement.group_assignments) == 1
         assert len(entitlement.extensions) == 1
+
+        # Test Basic (express + account + none)
+        basic_data = {
+            "user": {"descriptor": "user-2"},
+            "accessLevel": {
+                "accountLicenseType": "express",
+                "licenseDisplayName": "Basic",
+                "licensingSource": "account",
+                "msdnLicenseType": "none",
+                "assignmentSource": "group"
+            },
+            "projectEntitlements": [],
+            "groupAssignments": []
+        }
+        basic_entitlement = self.client._parse_entitlement(basic_data)
+        assert basic_entitlement.access_level == AccessLevel.BASIC
+
+        # Test Basic + Test Plans (advanced + account + none)
+        advanced_data = {
+            "user": {"descriptor": "user-3"},
+            "accessLevel": {
+                "accountLicenseType": "advanced",
+                "licenseDisplayName": "Basic + Test Plans",
+                "licensingSource": "account",
+                "msdnLicenseType": "none"
+            },
+            "projectEntitlements": [],
+            "groupAssignments": []
+        }
+        advanced_entitlement = self.client._parse_entitlement(advanced_data)
+        assert advanced_entitlement.access_level == AccessLevel.BASIC_PLUS_TEST_PLANS
+
+        # Test Visual Studio Enterprise (none + msdn + enterprise)
+        enterprise_data = {
+            "user": {"descriptor": "user-4"},
+            "accessLevel": {
+                "accountLicenseType": "none",
+                "licenseDisplayName": "Visual Studio Enterprise",
+                "licensingSource": "msdn",
+                "msdnLicenseType": "enterprise"
+            },
+            "projectEntitlements": [],
+            "groupAssignments": []
+        }
+        enterprise_entitlement = self.client._parse_entitlement(enterprise_data)
+        assert enterprise_entitlement.access_level == AccessLevel.VISUAL_STUDIO_ENTERPRISE
 
 
 class TestMembershipApiClient:

@@ -490,38 +490,59 @@ class EntitlementsApiClient(AzureDevOpsApiClient):
         """
         Parse entitlement data from API response.
 
+        Per Microsoft spec, access level is determined by:
+        - accountLicenseType (express, advanced, stakeholder, none)
+        - licensingSource (account, msdn)
+        - msdnLicenseType (none, eligible, enterprise, etc.)
+
+        Mapping table:
+        | Access Level                | accountLicenseType | licensingSource | msdnLicenseType |
+        |-----------------------------|--------------------|-----------------|-----------------|
+        | Basic                       | express            | account         | none            |
+        | Basic + Test Plans          | advanced           | account         | none            |
+        | Visual Studio Subscriber    | none               | msdn            | eligible        |
+        | Stakeholder                 | stakeholder        | account         | none            |
+        | Visual Studio Enterprise    | none               | msdn            | enterprise      |
+
         Args:
             entitlement_data: Raw entitlement data from API
 
         Returns:
             Entitlement object
         """
+        from src.models import LicensingSource, MsdnLicenseType
+
         # Extract user info
         user = entitlement_data.get('user', {})
         user_descriptor = user.get('descriptor', '')
 
-        # Extract access level info
+        # Extract access level info from API
         access_level_data = entitlement_data.get('accessLevel', {})
+        account_license_type = access_level_data.get('accountLicenseType', 'none')
+        licensing_source_str = access_level_data.get('licensingSource', 'none')
+        msdn_license_type_str = access_level_data.get('msdnLicenseType', 'none')
         license_display_name = access_level_data.get('licenseDisplayName')
-        access_level_value = access_level_data.get('accountLicenseType', 'none').lower()
 
-        # Map to our enum - handle common variations
-        access_level_mapping = {
-            'basic': AccessLevel.BASIC,
-            'express': AccessLevel.EXPRESS,
-            'stakeholder': AccessLevel.STAKEHOLDER,
-            'advanced': AccessLevel.ADVANCED,
-            'basicplustestplans': AccessLevel.BASIC_PLUS_TEST_PLANS,
-            'visualstudiosubscriber': AccessLevel.VISUAL_STUDIO_SUBSCRIBER,
-            'visualstudioenterprise': AccessLevel.VISUAL_STUDIO_ENTERPRISE,
-            'visualstudioprofessional': AccessLevel.VISUAL_STUDIO_PROFESSIONAL,
-            'visualstudiotestprofessional': AccessLevel.VISUAL_STUDIO_TEST_PROFESSIONAL,
-            'none': AccessLevel.NONE
-        }
+        # Parse enums
+        try:
+            licensing_source = LicensingSource(licensing_source_str.lower())
+        except ValueError:
+            licensing_source = LicensingSource.NONE
+            logger.warning(f"Unknown licensing source: {licensing_source_str}")
 
-        access_level = access_level_mapping.get(access_level_value, AccessLevel.NONE)
-        if access_level == AccessLevel.NONE and access_level_value != 'none':
-            logger.warning(f"Unknown access level: {access_level_value}")
+        try:
+            msdn_license_type = MsdnLicenseType(msdn_license_type_str.lower())
+        except ValueError:
+            msdn_license_type = MsdnLicenseType.NONE
+            if msdn_license_type_str and msdn_license_type_str.lower() != 'none':
+                logger.warning(f"Unknown MSDN license type: {msdn_license_type_str}")
+
+        # Determine access level based on the combination (per Microsoft spec)
+        access_level = self._determine_access_level(
+            account_license_type,
+            licensing_source,
+            msdn_license_type
+        )
 
         # Extract project entitlements
         project_entitlements = []
@@ -536,9 +557,10 @@ class EntitlementsApiClient(AzureDevOpsApiClient):
         return Entitlement(
             user_descriptor=user_descriptor,
             access_level=access_level,
+            account_license_type=account_license_type,
+            licensing_source=licensing_source,
+            msdn_license_type=msdn_license_type,
             license_display_name=license_display_name,
-            license_name=access_level_data.get('licensingSource'),
-            account_license_type=access_level_data.get('accountLicenseType'),
             assignment_source=access_level_data.get('assignmentSource'),
             date_created=entitlement_data.get('dateCreated'),
             last_accessed_date=entitlement_data.get('lastAccessedDate'),
@@ -547,6 +569,66 @@ class EntitlementsApiClient(AzureDevOpsApiClient):
             extensions=entitlement_data.get('extensions', []),
             metadata=entitlement_data
         )
+
+    def _determine_access_level(
+        self,
+        account_license_type: str,
+        licensing_source: 'LicensingSource',
+        msdn_license_type: 'MsdnLicenseType'
+    ) -> AccessLevel:
+        """
+        Determine the access level based on Microsoft's API specification.
+
+        Args:
+            account_license_type: Account license type from API
+            licensing_source: Source of the license
+            msdn_license_type: MSDN license type
+
+        Returns:
+            AccessLevel enum value
+        """
+        from src.models import LicensingSource, MsdnLicenseType
+
+        account_license_lower = account_license_type.lower()
+
+        # Basic: express + account + none
+        if (account_license_lower == 'express' and
+            licensing_source == LicensingSource.ACCOUNT and
+            msdn_license_type == MsdnLicenseType.NONE):
+            return AccessLevel.BASIC
+
+        # Basic + Test Plans: advanced + account + none
+        if (account_license_lower == 'advanced' and
+            licensing_source == LicensingSource.ACCOUNT and
+            msdn_license_type == MsdnLicenseType.NONE):
+            return AccessLevel.BASIC_PLUS_TEST_PLANS
+
+        # Visual Studio Subscriber: none + msdn + eligible
+        if (account_license_lower == 'none' and
+            licensing_source == LicensingSource.MSDN and
+            msdn_license_type == MsdnLicenseType.ELIGIBLE):
+            return AccessLevel.VISUAL_STUDIO_SUBSCRIBER
+
+        # Visual Studio Enterprise: none + msdn + enterprise
+        if (account_license_lower == 'none' and
+            licensing_source == LicensingSource.MSDN and
+            msdn_license_type == MsdnLicenseType.ENTERPRISE):
+            return AccessLevel.VISUAL_STUDIO_ENTERPRISE
+
+        # Stakeholder: stakeholder + account + none
+        if (account_license_lower == 'stakeholder' and
+            licensing_source == LicensingSource.ACCOUNT and
+            msdn_license_type == MsdnLicenseType.NONE):
+            return AccessLevel.STAKEHOLDER
+
+        # Default case - log for investigation
+        logger.warning(
+            f"Unmapped access level combination: "
+            f"accountLicenseType={account_license_type}, "
+            f"licensingSource={licensing_source}, "
+            f"msdnLicenseType={msdn_license_type}"
+        )
+        return AccessLevel.NONE
 
 
 class MembershipApiClient(AzureDevOpsApiClient):

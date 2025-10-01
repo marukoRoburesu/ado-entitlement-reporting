@@ -20,17 +20,38 @@ class SubjectKind(str, Enum):
 
 
 class AccessLevel(str, Enum):
-    """Azure DevOps access levels."""
+    """
+    Azure DevOps access levels - display names used in UI.
+
+    Note: Access levels are determined by combination of:
+    - accountLicenseType (express, advanced, stakeholder, none)
+    - licensingSource (account, msdn, etc.)
+    - msdnLicenseType (eligible, enterprise, etc.)
+    """
     NONE = "none"
-    EXPRESS = "express"
-    ADVANCED = "advanced"
     STAKEHOLDER = "stakeholder"
     BASIC = "basic"
     BASIC_PLUS_TEST_PLANS = "basicPlusTestPlans"
     VISUAL_STUDIO_SUBSCRIBER = "visualStudioSubscriber"
     VISUAL_STUDIO_ENTERPRISE = "visualStudioEnterprise"
-    VISUAL_STUDIO_PROFESSIONAL = "visualStudioProfessional"
-    VISUAL_STUDIO_TEST_PROFESSIONAL = "visualStudioTestProfessional"
+
+
+class LicensingSource(str, Enum):
+    """Source of the license assignment."""
+    ACCOUNT = "account"  # License assigned through Azure DevOps organization
+    MSDN = "msdn"        # License from Visual Studio subscription
+    PROFILE = "profile"  # License from user profile
+    NONE = "none"
+
+
+class MsdnLicenseType(str, Enum):
+    """MSDN/Visual Studio subscription license types."""
+    NONE = "none"
+    ELIGIBLE = "eligible"        # Visual Studio Subscriber (any edition)
+    PROFESSIONAL = "professional"  # Visual Studio Professional
+    ENTERPRISE = "enterprise"     # Visual Studio Enterprise
+    PLATFORMS = "platforms"       # MSDN Platforms
+    TESTPROFESSIONAL = "testProfessional"  # Visual Studio Test Professional
 
 
 class GroupType(str, Enum):
@@ -117,16 +138,26 @@ class Group(BaseModel):
 
 
 class Entitlement(BaseModel):
-    """Azure DevOps user entitlement entity."""
+    """
+    Azure DevOps user entitlement entity.
+
+    Access level is determined by the combination of:
+    - account_license_type: The license type (express, advanced, stakeholder, none)
+    - licensing_source: Where the license comes from (account, msdn)
+    - msdn_license_type: For MSDN licenses, the subscription type (eligible, enterprise, etc.)
+    """
 
     # Core entitlement fields
     user_descriptor: str = Field(..., description="Descriptor of the entitled user")
-    access_level: AccessLevel = Field(..., description="User's access level")
+    access_level: AccessLevel = Field(..., description="User's access level (derived from other fields)")
 
-    # Licensing information
-    license_display_name: Optional[str] = Field(None, description="Display name of the license")
-    license_name: Optional[str] = Field(None, description="Technical name of the license")
-    account_license_type: Optional[str] = Field(None, description="Type of account license")
+    # API fields that determine access level (per Microsoft spec)
+    account_license_type: Optional[str] = Field(None, description="Account license type: express, advanced, stakeholder, none")
+    licensing_source: Optional[LicensingSource] = Field(None, description="Source of license: account or msdn")
+    msdn_license_type: Optional[MsdnLicenseType] = Field(None, description="MSDN subscription type: none, eligible, enterprise, etc.")
+
+    # Display information
+    license_display_name: Optional[str] = Field(None, description="Display name of the license (e.g., 'Basic', 'Visual Studio Enterprise')")
 
     # Assignment information
     assignment_source: Optional[str] = Field(None, description="Source of the assignment")
