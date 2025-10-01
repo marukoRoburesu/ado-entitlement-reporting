@@ -10,6 +10,17 @@ import logging
 import colorlog
 from pathlib import Path
 
+# Fix Windows console encoding issues
+if sys.platform == 'win32':
+    try:
+        # Try to set UTF-8 encoding for Windows console
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    except (AttributeError, OSError):
+        # If that fails, just continue - worst case, some characters won't display correctly
+        pass
+
 import click
 
 from src.config import ConfigManager, AppConfig
@@ -121,10 +132,10 @@ def main(organization, config, output, output_formats, verbose, validate_config,
         try:
             config_manager = ConfigManager()
             created_path = config_manager.create_default_config(create_config)
-            click.echo(f"✅ Default configuration created at: {created_path}")
+            click.echo(f"[SUCCESS] Default configuration created at: {created_path}")
             return
         except Exception as e:
-            click.echo(f"❌ Error creating configuration: {e}", err=True)
+            click.echo(f"[ERROR] Error creating configuration: {e}", err=True)
             sys.exit(1)
 
     # Load configuration
@@ -142,7 +153,7 @@ def main(organization, config, output, output_formats, verbose, validate_config,
         logger.info(f"Configuration loaded from: {config_manager.config_path}")
 
     except Exception as e:
-        click.echo(f"❌ Error loading configuration: {e}", err=True)
+        click.echo(f"[ERROR] Error loading configuration: {e}", err=True)
         sys.exit(1)
 
     # Handle config validation
@@ -150,19 +161,19 @@ def main(organization, config, output, output_formats, verbose, validate_config,
         try:
             is_valid = config_manager.validate_config()
             if is_valid:
-                click.echo("✅ Configuration is valid")
+                click.echo("[SUCCESS] Configuration is valid")
                 return
             else:
-                click.echo("❌ Configuration validation failed", err=True)
+                click.echo("[ERROR] Configuration validation failed", err=True)
                 sys.exit(1)
         except Exception as e:
-            click.echo(f"❌ Error validating configuration: {e}", err=True)
+            click.echo(f"[ERROR] Error validating configuration: {e}", err=True)
             sys.exit(1)
 
     # Determine organizations to process
     organizations_to_process = app_config.organizations
     if not organizations_to_process:
-        click.echo("❌ No organizations specified. Use --organization or configure in config file.", err=True)
+        click.echo("[ERROR] No organizations specified. Use --organization or configure in config file.", err=True)
         sys.exit(1)
 
     # Apply command line overrides
@@ -181,7 +192,7 @@ def main(organization, config, output, output_formats, verbose, validate_config,
     try:
         for org in organizations_to_process:
             logger.info(f"Processing organization: {org}")
-            click.echo(f"🚀 Processing organization: {org}")
+            click.echo(f"\n[INFO] Processing organization: {org}")
 
             # Create authentication
             auth = AuthManager.from_environment(org)
@@ -189,40 +200,40 @@ def main(organization, config, output, output_formats, verbose, validate_config,
             # Validate token
             if not auth.validate_token():
                 logger.error(f"Authentication failed for organization: {org}")
-                click.echo(f"❌ Authentication failed for organization: {org}", err=True)
+                click.echo(f"[ERROR] Authentication failed for organization: {org}", err=True)
                 sys.exit(1)
 
-            logger.info(f"✅ Authentication successful for organization: {org}")
+            logger.info(f"Authentication successful for organization: {org}")
 
-            # Create data processor
-            data_processor = EntitlementDataProcessor(auth)
+            # Create data processor with report configuration
+            data_processor = EntitlementDataProcessor(auth, config=app_config.reports)
 
             if dry_run:
-                click.echo("🔍 Dry run mode - skipping data retrieval and report generation")
-                click.echo(f"📁 Would save reports to: {app_config.output.directory}")
-                click.echo(f"📄 Would generate formats: {', '.join(app_config.output.formats)}")
+                click.echo("[DRY RUN] Dry run mode - skipping data retrieval and report generation")
+                click.echo(f"[DRY RUN] Would save reports to: {app_config.output.directory}")
+                click.echo(f"[DRY RUN] Would generate formats: {', '.join(app_config.output.formats)}")
                 continue
 
             # Generate progress indicators
             with click.progressbar(length=4, label='Retrieving data') as bar:
                 # Step 1: Retrieve all data
-                click.echo("\n📡 Retrieving data from Azure DevOps APIs...")
+                click.echo("\n[STEP 1/4] Retrieving data from Azure DevOps APIs...")
                 data_processor.retrieve_all_data()
                 bar.update(1)
 
                 # Step 2: Process entitlements
-                click.echo("🔄 Processing user entitlements and group memberships...")
+                click.echo("[STEP 2/4] Processing user entitlements and group memberships...")
                 data_processor.process_user_entitlements()
                 bar.update(1)
 
                 # Step 3: Generate organization report
-                click.echo("📊 Generating organization analysis...")
+                click.echo("[STEP 3/4] Generating organization analysis...")
                 organization_report = data_processor.generate_organization_report()
                 all_organization_reports.append(organization_report)
                 bar.update(1)
 
                 # Step 4: Generate output reports
-                click.echo("📝 Generating reports...")
+                click.echo("[STEP 4/4] Generating reports...")
                 report_generator = ReportGenerator(app_config.output.directory)
                 generated_files = report_generator.generate_all_reports(
                     organization_report,
@@ -231,44 +242,44 @@ def main(organization, config, output, output_formats, verbose, validate_config,
                 bar.update(1)
 
             # Display results
-            click.echo(f"\n✅ Report generation completed for {org}")
-            click.echo(f"📊 Processed {organization_report.total_users} users, {organization_report.total_groups} groups")
-            click.echo(f"📁 Reports saved to: {app_config.output.directory}")
+            click.echo(f"\n[SUCCESS] Report generation completed for {org}")
+            click.echo(f"[INFO] Processed {organization_report.total_users} users, {organization_report.total_groups} groups")
+            click.echo(f"[INFO] Reports saved to: {app_config.output.directory}")
 
             # Show generated files
             for format_type, file_path in generated_files.items():
                 if isinstance(file_path, dict):
                     # CSV generates multiple files
-                    click.echo(f"   📄 {format_type.upper()} reports:")
+                    click.echo(f"  - {format_type.upper()} reports:")
                     for report_type, path in file_path.items():
-                        click.echo(f"      - {report_type}: {path.name}")
+                        click.echo(f"    * {report_type}: {path.name}")
                 else:
-                    click.echo(f"   📄 {format_type.upper()}: {file_path.name}")
+                    click.echo(f"  - {format_type.upper()}: {file_path.name}")
 
             # Show summary statistics
-            click.echo(f"\n📈 Summary Statistics:")
-            click.echo(f"   • Total Users: {organization_report.total_users}")
-            click.echo(f"   • Total Groups: {organization_report.total_groups}")
-            click.echo(f"   • Total Entitlements: {organization_report.total_entitlements}")
+            click.echo(f"\n[SUMMARY] Statistics:")
+            click.echo(f"  - Total Users: {organization_report.total_users}")
+            click.echo(f"  - Total Groups: {organization_report.total_groups}")
+            click.echo(f"  - Total Entitlements: {organization_report.total_entitlements}")
 
             if organization_report.chargeback_by_group:
-                click.echo(f"   • Chargeback Groups: {len(organization_report.chargeback_by_group)}")
+                click.echo(f"  - Chargeback Groups: {len(organization_report.chargeback_by_group)}")
 
             if organization_report.total_license_cost:
-                click.echo(f"   • Total License Cost: ${organization_report.total_license_cost:.2f}")
+                click.echo(f"  - Total License Cost: ${organization_report.total_license_cost:.2f}")
 
             if organization_report.orphaned_groups:
-                click.echo(f"   • Orphaned Groups: {len(organization_report.orphaned_groups)}")
+                click.echo(f"  - Orphaned Groups: {len(organization_report.orphaned_groups)}")
 
             # License breakdown
             if organization_report.licenses_by_type:
-                click.echo(f"\n📋 License Distribution:")
+                click.echo(f"\n[LICENSES] Distribution:")
                 for license_type, count in organization_report.licenses_by_type.items():
-                    click.echo(f"   • {license_type.replace('_', ' ').title()}: {count}")
+                    click.echo(f"  - {license_type.replace('_', ' ').title()}: {count}")
 
         # Generate consolidated reports if multiple organizations were processed
         if len(all_organization_reports) > 1:
-            click.echo(f"\n🔄 Generating consolidated reports across {len(all_organization_reports)} organizations...")
+            click.echo(f"\n[INFO] Generating consolidated reports across {len(all_organization_reports)} organizations...")
             logger.info(f"Generating consolidated reports for {len(all_organization_reports)} organizations")
 
             consolidated_generator = ConsolidatedReportGenerator(app_config.output.directory)
@@ -280,30 +291,30 @@ def main(organization, config, output, output_formats, verbose, validate_config,
                 all_organization_reports,
                 timestamp
             )
-            click.echo(f"   📄 Consolidated User Report: {consolidated_user_file.name}")
+            click.echo(f"  - Consolidated User Report: {consolidated_user_file.name}")
 
             # Generate consolidated chargeback report
             consolidated_chargeback_file = consolidated_generator.generate_consolidated_chargeback_report(
                 all_organization_reports,
                 timestamp
             )
-            click.echo(f"   📄 Consolidated Chargeback Report: {consolidated_chargeback_file.name}")
+            click.echo(f"  - Consolidated Chargeback Report: {consolidated_chargeback_file.name}")
 
             # Calculate total stats across all orgs
             total_users = sum(r.total_users for r in all_organization_reports)
             total_cost = sum(r.total_license_cost or 0 for r in all_organization_reports)
 
-            click.echo(f"\n📊 Consolidated Statistics:")
-            click.echo(f"   • Total Organizations: {len(all_organization_reports)}")
-            click.echo(f"   • Total Users (across all orgs): {total_users}")
-            click.echo(f"   • Total License Cost: ${total_cost:.2f}")
+            click.echo(f"\n[CONSOLIDATED] Statistics:")
+            click.echo(f"  - Total Organizations: {len(all_organization_reports)}")
+            click.echo(f"  - Total Users (across all orgs): {total_users}")
+            click.echo(f"  - Total License Cost: ${total_cost:.2f}")
 
     except Exception as e:
         logger.error(f"Error during execution: {e}")
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"[ERROR] {e}", err=True)
         sys.exit(1)
 
-    click.echo(f"\n🎉 Azure DevOps entitlement reporting completed successfully!")
+    click.echo(f"\n[SUCCESS] Azure DevOps entitlement reporting completed successfully!")
     logger.info("Azure DevOps entitlement reporting completed successfully")
 
 
