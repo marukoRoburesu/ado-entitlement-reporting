@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 from datetime import datetime, timezone
 
 from src.auth import AzureDevOpsAuth
+from src.config import ReportsConfig
 from src.data_retrieval import (
     UsersApiClient, GroupsApiClient, EntitlementsApiClient, MembershipApiClient
 )
@@ -31,17 +32,25 @@ class EntitlementDataProcessor:
     data to generate comprehensive entitlement reports for chargeback purposes.
     """
 
-    def __init__(self, auth: AzureDevOpsAuth, max_retries: int = 3, retry_delay: int = 1):
+    def __init__(
+        self,
+        auth: AzureDevOpsAuth,
+        config: Optional[ReportsConfig] = None,
+        max_retries: int = 3,
+        retry_delay: int = 1
+    ):
         """
         Initialize the data processor.
 
         Args:
             auth: Azure DevOps authentication handler
+            config: Report configuration for filtering options
             max_retries: Maximum number of retry attempts for API calls
             retry_delay: Delay between retries in seconds
         """
         self.auth = auth
         self.organization = auth.config.organization
+        self.config = config or ReportsConfig()
 
         # Initialize API clients
         self.users_client = UsersApiClient(auth, max_retries, retry_delay)
@@ -62,24 +71,41 @@ class EntitlementDataProcessor:
 
     def retrieve_all_data(self) -> None:
         """
-        Retrieve all data from Azure DevOps APIs.
+        Retrieve all data from Azure DevOps APIs and apply configured filters.
 
         This method orchestrates the data retrieval process, fetching users,
-        groups, entitlements, and memberships.
+        groups, entitlements, and memberships. It applies filtering based on
+        configuration to remove VSTS built-in users/groups before processing.
         """
         logger.info(f"Starting data retrieval for organization: {self.organization}")
 
         # Step 1: Retrieve users
         logger.info("Retrieving users...")
         users_list = self.users_client.get_users()
+        original_user_count = len(users_list)
+
+        # Filter VSTS users if configured
+        if self.config.exclude_vsts_users:
+            users_list = [u for u in users_list if not self._is_vsts_user(u)]
+            filtered_count = original_user_count - len(users_list)
+            logger.info(f"Filtered out {filtered_count} VSTS built-in users")
+
         self.users = {user.descriptor: user for user in users_list}
-        logger.info(f"Retrieved {len(self.users)} users")
+        logger.info(f"Retrieved {len(self.users)} users (after filtering)")
 
         # Step 2: Retrieve groups
         logger.info("Retrieving groups...")
         groups_list = self.groups_client.get_groups()
+        original_group_count = len(groups_list)
+
+        # Filter VSTS groups if configured
+        if self.config.exclude_vsts_groups:
+            groups_list = [g for g in groups_list if not self._is_vsts_group(g)]
+            filtered_count = original_group_count - len(groups_list)
+            logger.info(f"Filtered out {filtered_count} VSTS built-in groups")
+
         self.groups = {group.descriptor: group for group in groups_list}
-        logger.info(f"Retrieved {len(self.groups)} groups")
+        logger.info(f"Retrieved {len(self.groups)} groups (after filtering)")
 
         # Step 3: Retrieve entitlements (requires per-user lookup by descriptor)
         logger.info("Retrieving entitlements...")
@@ -87,7 +113,7 @@ class EntitlementDataProcessor:
         self.entitlements = {ent.user_descriptor: ent for ent in entitlements_list}
         logger.info(f"Retrieved {len(self.entitlements)} entitlements")
 
-        # Step 4: Retrieve memberships
+        # Step 4: Retrieve memberships (only for remaining groups)
         logger.info("Retrieving group memberships...")
         self._retrieve_all_memberships()
         logger.info(f"Retrieved {len(self.memberships)} membership relationships")
@@ -302,6 +328,59 @@ class EntitlementDataProcessor:
 
         return chargeback_groups
 
+    def _is_vsts_user(self, user: User) -> bool:
+        """
+        Check if a user is a VSTS built-in user or service account.
+
+        VSTS users typically have:
+        - origin='vsts' (built-in accounts)
+        - Display names containing common service account patterns
+
+        Args:
+            user: User object
+
+        Returns:
+            True if this is a VSTS built-in user
+        """
+        # Check origin - VSTS built-in users have 'vsts' origin
+        if user.origin and user.origin.lower() == 'vsts':
+            return True
+
+        # Check for common service account patterns in display name
+        if user.display_name:
+            lower_name = user.display_name.lower()
+            service_patterns = [
+                'project collection',
+                'build service',
+                'release management',
+                'agent pool service',
+                'deployment group service',
+                'azure devops',
+                'visualstudio.com'
+            ]
+            if any(pattern in lower_name for pattern in service_patterns):
+                return True
+
+        return False
+
+    def _is_vsts_group(self, group: Group) -> bool:
+        """
+        Check if a group is a VSTS built-in group.
+
+        VSTS built-in groups have origin='vsts' and are auto-created by Azure DevOps.
+
+        Args:
+            group: Group object
+
+        Returns:
+            True if this is a VSTS built-in group
+        """
+        # VSTS built-in groups have 'vsts' origin
+        if group.origin and group.origin.lower() == 'vsts':
+            return True
+
+        return False
+
     def _is_system_group(self, group: Group) -> bool:
         """
         Check if a group is a system/built-in group that should be excluded from chargeback.
@@ -323,34 +402,37 @@ class EntitlementDataProcessor:
 
     def _calculate_license_cost(self, entitlement: Optional[Entitlement]) -> Optional[float]:
         """
-        Calculate the cost of a license based on the license display name.
+        Calculate the cost of a license based on the access level.
+
+        Uses access level enum to determine cost, as this is the canonical
+        representation of license type after parsing API data.
 
         Args:
             entitlement: User's entitlement
 
         Returns:
-            License cost or None if no entitlement or unknown license type
+            License cost or None if no entitlement
         """
-        if not entitlement or not entitlement.license_display_name:
+        if not entitlement:
             return None
 
-        # Azure DevOps license costs (approximate monthly costs in USD)
+        # Azure DevOps license costs (monthly costs in USD)
         # These are standard prices and may vary by region or enterprise agreements
+        # Note: Visual Studio subscriptions are paid separately, so cost is $0 from ADO perspective
         LICENSE_COSTS = {
-            'Stakeholder': 0.0,  # Free
-            'Basic': 6.0,
-            'Basic + Test Plans': 52.0,
-            'Visual Studio Subscriber': 0.0,  # Included with VS subscription
-            'Visual Studio Professional': 45.0,
-            'Visual Studio Enterprise': 250.0,
-            'Visual Studio Test Professional': 52.0,
+            AccessLevel.STAKEHOLDER: 0.0,  # Free
+            AccessLevel.BASIC: 6.0,  # Standard Basic license
+            AccessLevel.BASIC_PLUS_TEST_PLANS: 52.0,  # Basic + Test Plans
+            AccessLevel.VISUAL_STUDIO_SUBSCRIBER: 0.0,  # Included with VS subscription
+            AccessLevel.VISUAL_STUDIO_ENTERPRISE: 0.0,  # Included with VS subscription
+            AccessLevel.NONE: 0.0,  # No license
         }
 
-        license_name = entitlement.license_display_name
-        cost = LICENSE_COSTS.get(license_name)
+        cost = LICENSE_COSTS.get(entitlement.access_level)
 
         if cost is None:
-            logger.debug(f"Unknown license type for cost calculation: {license_name}")
+            logger.debug(f"Unknown access level for cost calculation: {entitlement.access_level}")
+            return 0.0
 
         return cost
 
