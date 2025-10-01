@@ -206,14 +206,16 @@ class TestAuthManager:
         assert auth.config.pat_token == "env-token"
         assert auth.config.organization == "override-org"
 
+    @patch('src.auth.load_dotenv')
     @patch.dict(os.environ, {}, clear=True)
-    def test_from_environment_missing_token(self):
+    def test_from_environment_missing_token(self, mock_load_dotenv):
         """Test creating auth from environment with missing PAT token."""
         with pytest.raises(ValueError, match="AZURE_DEVOPS_PAT environment variable is required"):
             AuthManager.from_environment()
 
+    @patch('src.auth.load_dotenv')
     @patch.dict(os.environ, {'AZURE_DEVOPS_PAT': 'env-token'}, clear=True)
-    def test_from_environment_missing_organization(self):
+    def test_from_environment_missing_organization(self, mock_load_dotenv):
         """Test creating auth from environment with missing organization."""
         with pytest.raises(ValueError, match="Organization name is required"):
             AuthManager.from_environment()

@@ -189,17 +189,20 @@ class TestEntitlementDataProcessor:
             Group(
                 descriptor="group-1",
                 display_name="Developers Team",
-                group_type=GroupType.AZURE_AD
+                group_type=GroupType.AZURE_AD,
+                origin="aad"  # External group
             ),
             Group(
                 descriptor="group-2",
                 display_name="Project Collection Administrators",  # System group
-                group_type=GroupType.AZURE_AD
+                group_type=GroupType.AZURE_AD,
+                origin="vsts"  # Built-in VSTS group
             ),
             Group(
                 descriptor="group-3",
                 display_name="Marketing Team",
-                group_type=GroupType.WINDOWS
+                group_type=GroupType.WINDOWS,
+                origin="aad"  # External group
             ),
             Group(
                 descriptor="group-4",
@@ -221,11 +224,13 @@ class TestEntitlementDataProcessor:
         """Test system group detection."""
         system_group = Group(
             descriptor="group-sys",
-            display_name="Project Collection Administrators"
+            display_name="Project Collection Administrators",
+            origin="vsts"  # System groups have 'vsts' origin
         )
         user_group = Group(
             descriptor="group-user",
-            display_name="Development Team"
+            display_name="Development Team",
+            origin="aad"  # User groups typically have other origins
         )
 
         assert self.processor._is_system_group(system_group) is True
@@ -336,6 +341,133 @@ class TestEntitlementDataProcessor:
         mock_process_entitlements.assert_called_once()
         mock_generate_report.assert_called_once()
         assert result == mock_report
+
+    def test_is_vsts_user(self):
+        """Test VSTS user detection."""
+        # VSTS user by origin
+        vsts_user = User(descriptor="user-1", display_name="Test User", origin="vsts")
+        assert self.processor._is_vsts_user(vsts_user) is True
+
+        # Service account by name
+        service_user = User(descriptor="user-2", display_name="Project Collection Build Service")
+        assert self.processor._is_vsts_user(service_user) is True
+
+        # Regular user
+        regular_user = User(descriptor="user-3", display_name="John Doe", origin="aad")
+        assert self.processor._is_vsts_user(regular_user) is False
+
+    def test_is_vsts_group(self):
+        """Test VSTS group detection."""
+        # VSTS group
+        vsts_group = Group(descriptor="group-1", display_name="Contributors", origin="vsts")
+        assert self.processor._is_vsts_group(vsts_group) is True
+
+        # Regular group
+        regular_group = Group(descriptor="group-2", display_name="Dev Team", origin="aad")
+        assert self.processor._is_vsts_group(regular_group) is False
+
+    def test_retrieve_all_data_with_filtering(self):
+        """Test data retrieval with VSTS filtering enabled."""
+        from src.config import ReportsConfig
+
+        # Create processor with filtering enabled
+        config = ReportsConfig(exclude_vsts_users=True, exclude_vsts_groups=True)
+        processor = EntitlementDataProcessor(self.auth, config=config)
+
+        # Mock API clients
+        processor.users_client = Mock()
+        processor.groups_client = Mock()
+        processor.entitlements_client = Mock()
+        processor.membership_client = Mock()
+
+        # Mock users (mix of regular and VSTS)
+        processor.users_client.get_users.return_value = [
+            User(descriptor="user-1", display_name="John Doe", origin="aad"),
+            User(descriptor="user-2", display_name="Build Service", origin="vsts"),  # Should be filtered
+            User(descriptor="user-3", display_name="Jane Smith", origin="aad")
+        ]
+
+        # Mock groups (mix of regular and VSTS)
+        processor.groups_client.get_groups.return_value = [
+            Group(descriptor="group-1", display_name="Developers", origin="aad"),
+            Group(descriptor="group-2", display_name="Contributors", origin="vsts"),  # Should be filtered
+            Group(descriptor="group-3", display_name="QA Team", origin="aad")
+        ]
+
+        # Mock entitlements
+        processor.entitlements_client.get_entitlements.return_value = [
+            Entitlement(user_descriptor="user-1", access_level=AccessLevel.BASIC),
+            Entitlement(user_descriptor="user-3", access_level=AccessLevel.BASIC)
+        ]
+
+        # Mock memberships
+        processor.membership_client.get_group_memberships.return_value = []
+
+        # Retrieve data
+        processor.retrieve_all_data()
+
+        # Verify VSTS users and groups were filtered out
+        assert len(processor.users) == 2  # Only 2 regular users
+        assert "user-1" in processor.users
+        assert "user-2" not in processor.users  # VSTS user filtered
+        assert "user-3" in processor.users
+
+        assert len(processor.groups) == 2  # Only 2 regular groups
+        assert "group-1" in processor.groups
+        assert "group-2" not in processor.groups  # VSTS group filtered
+        assert "group-3" in processor.groups
+
+    def test_retrieve_all_data_without_filtering(self):
+        """Test data retrieval with VSTS filtering disabled."""
+        from src.config import ReportsConfig
+
+        # Create processor with filtering disabled
+        config = ReportsConfig(exclude_vsts_users=False, exclude_vsts_groups=False)
+        processor = EntitlementDataProcessor(self.auth, config=config)
+
+        # Mock API clients
+        processor.users_client = Mock()
+        processor.groups_client = Mock()
+        processor.entitlements_client = Mock()
+        processor.membership_client = Mock()
+
+        # Mock users (mix of regular and VSTS)
+        processor.users_client.get_users.return_value = [
+            User(descriptor="user-1", display_name="John Doe", origin="aad"),
+            User(descriptor="user-2", display_name="Build Service", origin="vsts"),
+            User(descriptor="user-3", display_name="Jane Smith", origin="aad")
+        ]
+
+        # Mock groups (mix of regular and VSTS)
+        processor.groups_client.get_groups.return_value = [
+            Group(descriptor="group-1", display_name="Developers", origin="aad"),
+            Group(descriptor="group-2", display_name="Contributors", origin="vsts"),
+            Group(descriptor="group-3", display_name="QA Team", origin="aad")
+        ]
+
+        # Mock entitlements
+        processor.entitlements_client.get_entitlements.return_value = [
+            Entitlement(user_descriptor="user-1", access_level=AccessLevel.BASIC),
+            Entitlement(user_descriptor="user-2", access_level=AccessLevel.BASIC),
+            Entitlement(user_descriptor="user-3", access_level=AccessLevel.BASIC)
+        ]
+
+        # Mock memberships
+        processor.membership_client.get_group_memberships.return_value = []
+
+        # Retrieve data
+        processor.retrieve_all_data()
+
+        # Verify all users and groups are included
+        assert len(processor.users) == 3  # All users included
+        assert "user-1" in processor.users
+        assert "user-2" in processor.users  # VSTS user included
+        assert "user-3" in processor.users
+
+        assert len(processor.groups) == 3  # All groups included
+        assert "group-1" in processor.groups
+        assert "group-2" in processor.groups  # VSTS group included
+        assert "group-3" in processor.groups
 
 
 # Helper for defaultdict import in test
