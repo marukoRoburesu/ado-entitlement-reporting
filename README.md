@@ -122,6 +122,8 @@ output:
     - csv
     - json
     - excel
+  timestamp_format: "%Y%m%d_%H%M%S"
+  include_timestamp: true  # Set to false for static filenames (daemon/dashboard use)
 
 # Logging Configuration
 logging:
@@ -143,6 +145,7 @@ reports:
 **Notes**:
 - License costs are built-in based on Microsoft's standard pricing and cannot be configured
 - VSTS filtering is enabled by default to exclude built-in users/groups from reports
+- Set `include_timestamp: false` to generate static filenames (e.g., `org_user_summary.csv`) that overwrite on each run, ideal for daemon/dashboard scenarios
 
 ## 🎯 Usage Examples
 
