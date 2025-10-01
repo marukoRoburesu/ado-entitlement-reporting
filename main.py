@@ -124,7 +124,24 @@ def setup_logging(config: AppConfig, verbose: bool = False) -> None:
     is_flag=True,
     help="Perform a dry run without generating reports"
 )
-def main(organization, config, output, output_formats, verbose, validate_config, create_config, dry_run):
+@click.option(
+    "--generate-dummy-data",
+    is_flag=True,
+    help="Generate reports using dummy data (no API access required)"
+)
+@click.option(
+    "--dummy-users",
+    type=int,
+    default=50,
+    help="Number of dummy users to generate (default: 50)"
+)
+@click.option(
+    "--dummy-groups",
+    type=int,
+    default=15,
+    help="Number of dummy groups to generate (default: 15)"
+)
+def main(organization, config, output, output_formats, verbose, validate_config, create_config, dry_run, generate_dummy_data, dummy_users, dummy_groups):
     """Generate Azure DevOps entitlement reports for license chargeback."""
 
     # Handle config creation
@@ -172,7 +189,12 @@ def main(organization, config, output, output_formats, verbose, validate_config,
 
     # Determine organizations to process
     organizations_to_process = app_config.organizations
-    if not organizations_to_process:
+
+    # For dummy data mode, use a default organization if none specified
+    if generate_dummy_data and not organizations_to_process:
+        organizations_to_process = ["dummy-organization"]
+        logger.info("Using dummy organization for dummy data generation")
+    elif not organizations_to_process:
         click.echo("[ERROR] No organizations specified. Use --organization or configure in config file.", err=True)
         sys.exit(1)
 
@@ -194,19 +216,54 @@ def main(organization, config, output, output_formats, verbose, validate_config,
             logger.info(f"Processing organization: {org}")
             click.echo(f"\n[INFO] Processing organization: {org}")
 
-            # Create authentication
-            auth = AuthManager.from_environment(org)
+            # Handle dummy data generation mode
+            if generate_dummy_data:
+                click.echo("[INFO] Using dummy data generator (no API access required)")
+                from src.dummy_data import DummyDataGenerator
 
-            # Validate token
-            if not auth.validate_token():
-                logger.error(f"Authentication failed for organization: {org}")
-                click.echo(f"[ERROR] Authentication failed for organization: {org}", err=True)
-                sys.exit(1)
+                # Create dummy data generator
+                dummy_generator = DummyDataGenerator(seed=42)  # Use fixed seed for reproducibility
 
-            logger.info(f"Authentication successful for organization: {org}")
+                # Generate dummy data
+                click.echo(f"[INFO] Generating {dummy_users} users and {dummy_groups} groups...")
+                users, groups, entitlements, memberships = dummy_generator.generate_complete_dataset(
+                    num_users=dummy_users,
+                    num_groups=dummy_groups
+                )
 
-            # Create data processor with report configuration
-            data_processor = EntitlementDataProcessor(auth, config=app_config.reports)
+                # Create a mock auth for the processor (won't be used for API calls)
+                from src.auth import AuthConfig, AzureDevOpsAuth
+                mock_auth_config = AuthConfig(
+                    organization=org,
+                    pat_token="dummy-token"
+                )
+                auth = AzureDevOpsAuth(mock_auth_config)
+
+                # Create data processor and inject dummy data (convert lists to dictionaries)
+                data_processor = EntitlementDataProcessor(auth, config=app_config.reports)
+                data_processor.users = {user.descriptor: user for user in users}
+                data_processor.groups = {group.descriptor: group for group in groups}
+                data_processor.entitlements = {ent.user_descriptor: ent for ent in entitlements}
+                data_processor.memberships = memberships
+
+                logger.info(f"Loaded {len(users)} users, {len(groups)} groups, "
+                          f"{len(entitlements)} entitlements, {len(memberships)} memberships")
+
+            else:
+                # Normal mode: authenticate and retrieve real data
+                # Create authentication
+                auth = AuthManager.from_environment(org)
+
+                # Validate token
+                if not auth.validate_token():
+                    logger.error(f"Authentication failed for organization: {org}")
+                    click.echo(f"[ERROR] Authentication failed for organization: {org}", err=True)
+                    sys.exit(1)
+
+                logger.info(f"Authentication successful for organization: {org}")
+
+                # Create data processor with report configuration
+                data_processor = EntitlementDataProcessor(auth, config=app_config.reports)
 
             if dry_run:
                 click.echo("[DRY RUN] Dry run mode - skipping data retrieval and report generation")
@@ -215,10 +272,13 @@ def main(organization, config, output, output_formats, verbose, validate_config,
                 continue
 
             # Generate progress indicators
-            with click.progressbar(length=4, label='Retrieving data') as bar:
-                # Step 1: Retrieve all data
-                click.echo("\n[STEP 1/4] Retrieving data from Azure DevOps APIs...")
-                data_processor.retrieve_all_data()
+            with click.progressbar(length=4, label='Processing data') as bar:
+                # Step 1: Retrieve all data (skip if using dummy data)
+                if not generate_dummy_data:
+                    click.echo("\n[STEP 1/4] Retrieving data from Azure DevOps APIs...")
+                    data_processor.retrieve_all_data()
+                else:
+                    click.echo("\n[STEP 1/4] Using generated dummy data...")
                 bar.update(1)
 
                 # Step 2: Process entitlements
