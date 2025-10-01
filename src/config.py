@@ -82,6 +82,16 @@ class ReportsConfig(BaseModel):
     group_details: bool = True
     user_details: bool = True
 
+    # Filtering options
+    exclude_vsts_users: bool = Field(
+        default=True,
+        description="Exclude VSTS built-in users and service accounts from all reports"
+    )
+    exclude_vsts_groups: bool = Field(
+        default=True,
+        description="Exclude VSTS built-in groups from all reports"
+    )
+
 
 class AppConfig(BaseModel):
     """Main application configuration."""
