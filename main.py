@@ -234,7 +234,10 @@ def main(organization, config, output, output_formats, verbose, validate_config,
 
                 # Step 4: Generate output reports
                 click.echo("[STEP 4/4] Generating reports...")
-                report_generator = ReportGenerator(app_config.output.directory)
+                report_generator = ReportGenerator(
+                    app_config.output.directory,
+                    include_timestamp=app_config.output.include_timestamp
+                )
                 generated_files = report_generator.generate_all_reports(
                     organization_report,
                     app_config.output.formats
@@ -282,7 +285,10 @@ def main(organization, config, output, output_formats, verbose, validate_config,
             click.echo(f"\n[INFO] Generating consolidated reports across {len(all_organization_reports)} organizations...")
             logger.info(f"Generating consolidated reports for {len(all_organization_reports)} organizations")
 
-            consolidated_generator = ConsolidatedReportGenerator(app_config.output.directory)
+            consolidated_generator = ConsolidatedReportGenerator(
+                app_config.output.directory,
+                include_timestamp=app_config.output.include_timestamp
+            )
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 

@@ -40,6 +40,10 @@ class OutputConfig(BaseModel):
     formats: List[str] = Field(default=["csv", "json"])
     directory: str = "./reports"
     timestamp_format: str = "%Y%m%d_%H%M%S"
+    include_timestamp: bool = Field(
+        default=True,
+        description="Include timestamp in report filenames. Set to false for static filenames that overwrite."
+    )
 
     @field_validator('formats')
     @classmethod

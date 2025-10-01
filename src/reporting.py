@@ -28,19 +28,22 @@ class ConsolidatedReportGenerator:
     and aggregating costs.
     """
 
-    def __init__(self, output_directory: Union[str, Path] = "./reports"):
+    def __init__(self, output_directory: Union[str, Path] = "./reports", include_timestamp: bool = True):
         """
         Initialize the consolidated report generator.
 
         Args:
             output_directory: Directory to save consolidated reports
+            include_timestamp: Whether to include timestamp in filenames (for static filenames, set to False)
         """
         self.output_directory = Path(output_directory)
         self.output_directory.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Consolidated report generator initialized with output directory: {self.output_directory}")
+        self.include_timestamp = include_timestamp
+        logger.info(f"Consolidated report generator initialized with output directory: {self.output_directory}, "
+                   f"include_timestamp: {self.include_timestamp}")
 
     def generate_consolidated_user_report(self, reports: List[OrganizationReport],
-                                         timestamp: str) -> Path:
+                                         timestamp: str = None) -> Path:
         """
         Generate a consolidated user report across all organizations.
 
@@ -51,12 +54,18 @@ class ConsolidatedReportGenerator:
 
         Args:
             reports: List of organization reports
-            timestamp: Timestamp string for filename
+            timestamp: Timestamp string for filename (optional, used if include_timestamp is True)
 
         Returns:
             Path to generated consolidated CSV file
         """
-        file_path = self.output_directory / f"consolidated_user_summary_{timestamp}.csv"
+        if self.include_timestamp:
+            if not timestamp:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            file_path = self.output_directory / f"all_organizations_users_{timestamp}.csv"
+        else:
+            file_path = self.output_directory / f"all_organizations_users.csv"
+
         logger.info(f"Generating consolidated user report: {file_path}")
 
         # Build user index by email/principal name
@@ -126,18 +135,24 @@ class ConsolidatedReportGenerator:
         return file_path
 
     def generate_consolidated_chargeback_report(self, reports: List[OrganizationReport],
-                                               timestamp: str) -> Path:
+                                               timestamp: str = None) -> Path:
         """
         Generate a consolidated chargeback report across all organizations.
 
         Args:
             reports: List of organization reports
-            timestamp: Timestamp string for filename
+            timestamp: Timestamp string for filename (optional, used if include_timestamp is True)
 
         Returns:
             Path to generated consolidated CSV file
         """
-        file_path = self.output_directory / f"consolidated_chargeback_{timestamp}.csv"
+        if self.include_timestamp:
+            if not timestamp:
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            file_path = self.output_directory / f"all_organizations_chargeback_{timestamp}.csv"
+        else:
+            file_path = self.output_directory / f"all_organizations_chargeback.csv"
+
         logger.info(f"Generating consolidated chargeback report: {file_path}")
 
         # Aggregate by organization and group
@@ -183,16 +198,19 @@ class ReportGenerator:
     for Azure DevOps entitlement reporting.
     """
 
-    def __init__(self, output_directory: Union[str, Path] = "./reports"):
+    def __init__(self, output_directory: Union[str, Path] = "./reports", include_timestamp: bool = True):
         """
         Initialize the report generator.
 
         Args:
             output_directory: Directory to save reports
+            include_timestamp: Whether to include timestamp in filenames (for static filenames, set to False)
         """
         self.output_directory = Path(output_directory)
         self.output_directory.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Report generator initialized with output directory: {self.output_directory}")
+        self.include_timestamp = include_timestamp
+        logger.info(f"Report generator initialized with output directory: {self.output_directory}, "
+                   f"include_timestamp: {self.include_timestamp}")
 
     def generate_all_reports(self, report: OrganizationReport, formats: List[str]) -> Dict[str, Path]:
         """
@@ -236,25 +254,31 @@ class ReportGenerator:
         Returns:
             Dictionary mapping report types to file paths
         """
-        timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S")
         org_name = report.organization
+
+        # Build filename suffix (timestamp or empty)
+        if self.include_timestamp:
+            timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S")
+            suffix = f"_{timestamp}"
+        else:
+            suffix = ""
 
         csv_files = {}
 
         # 1. User Summary Report
-        user_summary_file = self.output_directory / f"{org_name}_user_summary_{timestamp}.csv"
+        user_summary_file = self.output_directory / f"{org_name}_user_summary{suffix}.csv"
         csv_files['user_summary'] = self._generate_user_summary_csv(report, user_summary_file)
 
         # 2. Chargeback Report
-        chargeback_file = self.output_directory / f"{org_name}_chargeback_{timestamp}.csv"
+        chargeback_file = self.output_directory / f"{org_name}_chargeback{suffix}.csv"
         csv_files['chargeback'] = self._generate_chargeback_csv(report, chargeback_file)
 
         # 3. Group Analysis Report
-        group_analysis_file = self.output_directory / f"{org_name}_group_analysis_{timestamp}.csv"
+        group_analysis_file = self.output_directory / f"{org_name}_group_analysis{suffix}.csv"
         csv_files['group_analysis'] = self._generate_group_analysis_csv(report, group_analysis_file)
 
         # 4. License Summary Report
-        license_summary_file = self.output_directory / f"{org_name}_license_summary_{timestamp}.csv"
+        license_summary_file = self.output_directory / f"{org_name}_license_summary{suffix}.csv"
         csv_files['license_summary'] = self._generate_license_summary_csv(report, license_summary_file)
 
         logger.info(f"Generated {len(csv_files)} CSV reports")
@@ -425,9 +449,14 @@ class ReportGenerator:
         Returns:
             Path to generated JSON file
         """
-        timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S")
         org_name = report.organization
-        file_path = self.output_directory / f"{org_name}_complete_report_{timestamp}.json"
+
+        # Build filename with or without timestamp
+        if self.include_timestamp:
+            timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S")
+            file_path = self.output_directory / f"{org_name}_complete_report_{timestamp}.json"
+        else:
+            file_path = self.output_directory / f"{org_name}_complete_report.json"
 
         logger.debug(f"Generating JSON report: {file_path}")
 
@@ -506,9 +535,14 @@ class ReportGenerator:
         Returns:
             Path to generated Excel file
         """
-        timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S")
         org_name = report.organization
-        file_path = self.output_directory / f"{org_name}_report_{timestamp}.xlsx"
+
+        # Build filename with or without timestamp
+        if self.include_timestamp:
+            timestamp = report.generated_at.strftime("%Y%m%d_%H%M%S")
+            file_path = self.output_directory / f"{org_name}_report_{timestamp}.xlsx"
+        else:
+            file_path = self.output_directory / f"{org_name}_report.xlsx"
 
         logger.debug(f"Generating Excel report: {file_path}")
 
