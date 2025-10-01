@@ -13,11 +13,13 @@ A comprehensive Python tool for generating Azure DevOps entitlement reports for 
 - **Smart Rate Limiting**: Automatic retry mechanisms and rate limit handling for large organizations
 - **Recursive Group Resolution**: Resolves nested group memberships with cycle detection
 - **Real-time Token Validation**: Validates Azure DevOps PAT tokens before processing
+- **Built-in Group Exclusions**: Automatically filters VSTS built-in groups, service accounts, and system users
 
 ### 📊 **Advanced Reporting**
 - **Multiple Export Formats**: CSV, JSON, and Excel reports for different stakeholder needs
-- **Chargeback Analysis**: Detailed cost allocation by security groups and organizational units
-- **License Distribution**: Complete breakdown of Basic, Stakeholder, and VS Enterprise licenses
+- **Chargeback Analysis**: Detailed cost allocation by security groups with external group support
+- **Consolidated Multi-Org Reports**: Generate combined reports across multiple Azure DevOps organizations
+- **License Distribution**: Complete breakdown of Basic, Stakeholder, Basic + Test Plans, Visual Studio Subscriber, and Visual Studio Enterprise access levels
 - **Orphaned Group Detection**: Identifies unused groups and optimization opportunities
 
 ### 🛠️ **Enterprise-Ready Features**
@@ -26,10 +28,11 @@ A comprehensive Python tool for generating Azure DevOps entitlement reports for 
 - **Comprehensive Logging**: Colored console output with file logging support
 - **Progress Indicators**: Real-time progress bars for long-running operations
 - **Dry-Run Mode**: Test configurations without generating actual reports
+- **Multi-Organization Support**: Process multiple Azure DevOps organizations in a single run
 
 ### 🧪 **Quality Assurance**
-- **120+ Tests**: Comprehensive test suite with 100% pass rate
-- **Type Safety**: Full type hints with mypy validation
+- **124 Tests**: Comprehensive test suite with 100% pass rate
+- **Type Safety**: Full type hints with pydantic models and validation
 - **Code Quality**: Black formatting and flake8 linting
 - **Error Handling**: Robust error handling for network issues and API limits
 
@@ -124,27 +127,35 @@ output:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "logs/entitlement-reporting.log"
+  file: "azure_devops_reporting.log"
 
 # Report Configuration
 reports:
-  include_inactive_users: false
-  include_system_groups: false
-  license_costs:
-    basic: 50.0
-    stakeholder: 25.0
-    vs_enterprise: 250.0
+  include_empty_groups: false
+  group_details: true
+  user_details: true
+
+  # Filtering options - exclude VSTS built-in users and groups from all reports
+  exclude_vsts_users: true   # Filter out VSTS built-in users and service accounts
+  exclude_vsts_groups: true  # Filter out VSTS built-in groups
 ```
+
+**Notes**:
+- License costs are built-in based on Microsoft's standard pricing and cannot be configured
+- VSTS filtering is enabled by default to exclude built-in users/groups from reports
 
 ## 🎯 Usage Examples
 
 ### Command Line Options
 
 ```bash
-# Basic report generation
+# Basic report generation (single organization)
 python main.py --organization myorg
 
-# Multiple organizations with custom output
+# Multiple organizations from config file (generates consolidated reports)
+python main.py --config config/config.yaml
+
+# Custom output directory
 python main.py --config config/config.yaml --output ./custom-reports
 
 # Specific formats only
@@ -179,49 +190,87 @@ if not auth.validate_token():
 
 # Process data
 processor = EntitlementDataProcessor(auth)
-report = processor.run_complete_analysis()
+
+# Retrieve and process all data
+processor.retrieve_all_data()
+processor.process_user_entitlements()
+
+# Generate organization report
+report = processor.generate_organization_report()
 
 # Generate reports
 generator = ReportGenerator("./reports")
 files = generator.generate_all_reports(report, ["csv", "json", "excel"])
 
 print(f"Generated reports: {files}")
+print(f"Total users: {report.total_users}")
+print(f"Total license cost: ${report.total_license_cost:.2f}")
 ```
 
 ## 📊 Report Types
 
-### CSV Reports (4 Files Generated)
+### Per-Organization Reports
+
+Each organization generates the following reports:
+
+#### CSV Reports (4 Files Per Organization)
 
 1. **User Summary** (`{org}_user_summary_{timestamp}.csv`)
    - Complete user details with entitlements and group memberships
-   - License information and costs
-   - Last access dates and activity status
+   - License information and costs (Basic, Stakeholder, Basic + Test Plans, Visual Studio subscriptions)
+   - Email addresses and chargeback group assignments
+   - Filtered to exclude VSTS built-in users and service accounts
 
 2. **Chargeback Analysis** (`{org}_chargeback_{timestamp}.csv`)
-   - Cost allocation by security groups
-   - License distribution per group
-   - User counts and total costs
+   - Cost allocation by security groups (including external Azure AD groups)
+   - License distribution per chargeback group
+   - User counts and total costs per group
+   - Supports all access levels including Visual Studio subscriptions
 
 3. **Group Analysis** (`{org}_group_analysis_{timestamp}.csv`)
    - Group types and member counts
    - Orphaned group identification
    - Group hierarchy information
+   - Origin (Azure DevOps vs External/AAD)
 
 4. **License Summary** (`{org}_license_summary_{timestamp}.csv`)
-   - License type distribution
+   - License type distribution (Basic, Stakeholder, Basic + Test Plans, Visual Studio subscriptions)
    - Cost analysis and utilization
    - Percentage breakdowns
 
-### JSON Report
+#### JSON Report (`{org}_complete_report_{timestamp}.json`)
+
+Complete data export with full hierarchical structure including all metadata, users, groups, chargeback analysis, and license information.
+
+#### Excel Report (`{org}_entitlement_report_{timestamp}.xlsx`)
+
+Multi-worksheet Excel file with separate tabs for Summary, User Details, Chargeback, Group Analysis, and License Analysis.
+
+### Consolidated Multi-Organization Reports
+
+When processing multiple organizations, two additional consolidated reports are generated:
+
+1. **Consolidated User Report** (`all_organizations_users_{timestamp}.csv`)
+   - Combined user data from all organizations
+   - Includes organization field for tracking
+   - Consolidated view of all users across the enterprise
+
+2. **Consolidated Chargeback Report** (`all_organizations_chargeback_{timestamp}.csv`)
+   - Aggregated chargeback data across all organizations
+   - Organization-level cost breakdowns
+   - Enterprise-wide license cost visibility
+
+### JSON Report Structure
 
 Complete data export with full hierarchical structure:
 ```json
 {
   "metadata": {
     "organization": "myorg",
-    "generated_at": "2024-01-15T10:30:00Z",
+    "generated_at": "2025-09-30T10:30:00Z",
     "total_users": 150,
     "total_groups": 25,
+    "total_entitlements": 150,
     "total_license_cost": 7500.0
   },
   "chargeback_analysis": {
@@ -232,18 +281,15 @@ Complete data export with full hierarchical structure:
     }
   },
   "user_summaries": [...],
+  "licenses_by_type": {
+    "basic": 100,
+    "stakeholder": 40,
+    "basic_test_plans": 5,
+    "advanced": 5
+  },
   "orphaned_groups": [...]
 }
 ```
-
-### Excel Report
-
-Multi-worksheet Excel file with:
-- **Summary**: High-level organization metrics
-- **User Details**: Complete user information
-- **Chargeback**: Cost allocation analysis
-- **Group Analysis**: Group statistics and hierarchy
-- **License Analysis**: License distribution and costs
 
 ## 🔧 Development
 
@@ -276,21 +322,29 @@ flake8 src/ tests/
 ### Project Structure
 
 ```
-azure-devops-entitlement-reporting/
+ado-entitlement-reporting/
 ├── src/                          # Source code
-│   ├── auth.py                  # Authentication handling
-│   ├── config.py                # Configuration management
-│   ├── data_processor.py        # Data processing engine
-│   ├── data_retrieval.py        # API clients
-│   ├── models.py                # Data models
-│   └── reporting.py             # Report generation
-├── tests/                       # Test suite (120 tests)
-├── config/                      # Configuration files
-├── reports/                     # Generated reports
-├── logs/                        # Log files
+│   ├── __init__.py
+│   ├── auth.py                  # Authentication and token validation
+│   ├── config.py                # Configuration management with pydantic
+│   ├── data_processor.py        # Data processing and analysis engine
+│   ├── data_retrieval.py        # Azure DevOps API clients
+│   ├── models.py                # Pydantic data models
+│   └── reporting.py             # Report generation (CSV, JSON, Excel)
+├── tests/                       # Test suite (124 tests)
+│   ├── test_auth.py
+│   ├── test_config.py
+│   ├── test_data_processor.py
+│   ├── test_data_retrieval.py
+│   ├── test_models.py
+│   └── test_reporting.py
+├── config/                      # Configuration files directory
 ├── main.py                      # CLI entry point
 ├── requirements.txt             # Dependencies
-├── pytest.ini                  # Test configuration
+├── pytest.ini                   # Test configuration
+├── CLAUDE.md                    # AI assistant guidance
+├── .env.example                 # Environment variables template
+├── .gitignore                   # Git ignore patterns
 └── README.md                    # This file
 ```
 
